@@ -96,6 +96,9 @@ init_device_sources = [
     "uevent_dependency_graph.cpp",
     "ueventd.cpp",
     "ueventd_parser.cpp",
+    "first_stage_init.cpp",
+    "first_stage_mount.cpp",
+    "first_stage_mount_android.cpp",
 ]
 
 soong_config_module_type {

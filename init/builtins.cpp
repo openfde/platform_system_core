@@ -629,7 +629,7 @@ static Result<void> do_mount_all(const BuiltinArguments& args) {
 
     std::string prop_name = "ro.boottime.init.mount_all."s + prop_post_fix;
     android::base::Timer t;
-
+/*
     Fstab fstab;
     if (mount_all->fstab_path.empty()) {
         if (!ReadDefaultFstab(&fstab)) {
@@ -642,12 +642,13 @@ static Result<void> do_mount_all(const BuiltinArguments& args) {
     }
 
     auto mount_fstab_result = fs_mgr_mount_all(&fstab, mount_all->mode);
+*/
     SetProperty(prop_name, std::to_string(t.duration().count()));
 
     if (mount_all->import_rc) {
         import_late(mount_all->rc_paths);
     }
-
+    int mount_fstab_result = FS_MGR_MNTALL_DEV_NOT_ENCRYPTABLE;
     if (queue_event) {
         /* queue_fs_event will queue event based on mount_fstab return code
          * and return processed return code*/

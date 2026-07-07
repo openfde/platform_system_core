@@ -212,6 +212,7 @@ void Subcontext::Fork() {
         if (child_fd < 0) {
             PLOG(FATAL) << "Could not dup child_fd";
         }
+#if 0
 
         // We don't switch contexts if we're running the unit tests.  We don't use std::optional,
         // since we still need a real context string to pass to the builtin functions.
@@ -220,6 +221,7 @@ void Subcontext::Fork() {
                 PLOG(FATAL) << "Could not set execcon for '" << context_ << "'";
             }
         }
+#endif
 #if defined(__ANDROID__)
         // subcontext init runs in "default" mount namespace
         // so that it can access /apex/*

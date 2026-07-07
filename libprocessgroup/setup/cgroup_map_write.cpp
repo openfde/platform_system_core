@@ -291,7 +291,7 @@ bool CgroupSetup() {
 
         if (!SetupCgroup(descriptor)) {
             LOG(ERROR) << "Failed to setup " << name << " cgroup";
-            return false;
+            //return false;
         }
     }
 

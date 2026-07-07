@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <android-base/strings.h>
 
 #include <chrono>
 #include <filesystem>
@@ -349,10 +350,12 @@ int FirstStageMain(int argc, char** argv) {
     CHECKCALL(setenv("PATH", _PATH_DEFPATH, 1));
     // Get the basic filesystem setup we need put together in the initramdisk
     // on / and then we'll let the rc file figure out the rest.
-    CHECKCALL(mount("tmpfs", "/dev", "tmpfs", MS_NOSUID, "mode=0755"));
+    //CHECKCALL(mount("tmpfs", "/dev", "tmpfs", MS_NOSUID, "mode=0755"));
     CHECKCALL(mkdir("/dev/pts", 0755));
     CHECKCALL(mkdir("/dev/socket", 0755));
     CHECKCALL(mkdir("/dev/dm-user", 0755));
+    mount("/system/etc", "/etc", "none", MS_BIND, NULL); // cgroup fix
+    unshare(CLONE_NEWCGROUP);
     CHECKCALL(mount("devpts", "/dev/pts", "devpts", 0, NULL));
 #define MAKE_STR(x) __STRING(x)
     CHECKCALL(mount("proc", "/proc", "proc", 0, "hidepid=2,gid=" MAKE_STR(AID_READPROC)));
@@ -419,7 +422,7 @@ int FirstStageMain(int argc, char** argv) {
         for (const auto& [error_string, error_errno] : errors) {
             LOG(ERROR) << error_string << " " << strerror(error_errno);
         }
-        LOG(FATAL) << "Init encountered errors starting first stage, aborting";
+        //LOG(FATAL) << "Init encountered errors starting first stage, aborting";
     }
 
     LOG(INFO) << "init first stage started!";
@@ -532,6 +535,7 @@ int FirstStageMain(int argc, char** argv) {
         SwitchRoot("/first_stage_ramdisk");
     }
 
+#if 0
     if (IsRecoveryMode()) {
         LOG(INFO) << "First stage mount skipped (recovery mode)";
     } else {
@@ -552,7 +556,7 @@ int FirstStageMain(int argc, char** argv) {
             LOG(FATAL) << "Failed to mount required partitions early ...";
         }
     }
-
+#endif
     struct stat new_root_info{};
     if (stat("/", &new_root_info) != 0) {
         PLOG(ERROR) << "Could not stat(\"/\"), not freeing ramdisk";
@@ -568,8 +572,19 @@ int FirstStageMain(int argc, char** argv) {
     setenv(kEnvFirstStageStartedAt, std::to_string(start_time.time_since_epoch().count()).c_str(),
            1);
 
+
     const char* path = "/system/bin/init";
-    const char* args[] = {path, "selinux_setup", nullptr};
+    std::vector<const char *> args = {path, "second_stage"};
+    std::string cl;
+    android::base::ReadFileToString("/proc/self/cmdline", &cl);
+    std::replace(cl.begin(), cl.end(), '\0', ' ');
+    int i = 0;
+    for (const auto& entry : android::base::Split(android::base::Trim(cl), " ")) {
+        if (i++ == 0) continue; // ignore first arg '/init'
+        args.push_back(entry.c_str());
+    }
+    args.push_back(nullptr);
+
     auto fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     dup2(fd, STDOUT_FILENO);
     dup2(fd, STDERR_FILENO);
@@ -586,7 +601,7 @@ int FirstStageMain(int argc, char** argv) {
     // are inherited beyond exec.
     setenv("HWASAN_OPTIONS", STRINGIFY(HWASAN_OPTIONS), true);
 #endif
-    execv(path, const_cast<char**>(args));
+    execv(path, const_cast<char**>(args.data()));
 
     // execv() only returns if an error happened, in which case we
     // panic and never fall through this conditional.

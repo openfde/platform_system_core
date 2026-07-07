@@ -827,6 +827,9 @@ static Result<void> UnmountAllApexes() {
 //
 static void DoReboot(unsigned int cmd, const std::string& reason,
                      const std::string& reboot_target) {
+                   if (true) {
+                         return;
+                   }
     Timer t;
     LOG(INFO) << "Reboot start, reason: " << reason << ", reboot_target: " << reboot_target;
 

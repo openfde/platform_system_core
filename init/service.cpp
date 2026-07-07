@@ -80,6 +80,7 @@ namespace android {
 namespace init {
 
 static Result<std::string> ComputeContextFromExecutable(const std::string& service_path) {
+    se_hack1("HACKED");
     std::string computed_context;
 
     char* raw_con = nullptr;
@@ -260,9 +261,11 @@ void Service::SetProcessAttributesAndCaps(InterprocessFifo setsid_finished) {
     }
 
     if (!seclabel_.empty()) {
+#if 0
         if (setexeccon(seclabel_.c_str()) < 0) {
             PLOG(FATAL) << "cannot setexeccon('" << seclabel_ << "') for " << name_;
         }
+#endif
     }
 
     if (capabilities_) {
@@ -669,14 +672,16 @@ Result<void> Service::Start() {
     }
 
     std::string scon;
-    if (!seclabel_.empty()) {
-        scon = seclabel_;
-    } else {
-        auto result = ComputeContextFromExecutable(args_[0]);
-        if (!result.ok()) {
-            return result.error();
+    if (false) {
+        if (!seclabel_.empty()) {
+            scon = seclabel_;
+        } else {
+            auto result = ComputeContextFromExecutable(args_[0]);
+            if (!result.ok()) {
+                return result.error();
+            }
+            scon = *result;
         }
-        scon = *result;
     }
 
     if (!mount_namespace_.has_value()) {

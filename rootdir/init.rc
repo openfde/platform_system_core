@@ -229,20 +229,20 @@ on init
     chown system package_info /config/sdcardfs
 
     # Mount binderfs
-    mkdir /dev/binderfs
-    mount binder binder /dev/binderfs stats=global
-    chmod 0755 /dev/binderfs
+    #mkdir /dev/binderfs
+    #mount binder binder /dev/binderfs stats=global
+    #chmod 0755 /dev/binderfs
 
     # Mount fusectl
-    mount fusectl none /sys/fs/fuse/connections
+    #mount fusectl none /sys/fs/fuse/connections
 
-    symlink /dev/binderfs/binder /dev/binder
-    symlink /dev/binderfs/hwbinder /dev/hwbinder
-    symlink /dev/binderfs/vndbinder /dev/vndbinder
+    #symlink /dev/binderfs/binder /dev/binder
+    #symlink /dev/binderfs/hwbinder /dev/hwbinder
+    #symlink /dev/binderfs/vndbinder /dev/vndbinder
 
-    chmod 0666 /dev/binderfs/hwbinder
-    chmod 0666 /dev/binderfs/binder
-    chmod 0666 /dev/binderfs/vndbinder
+    #chmod 0666 /dev/binderfs/hwbinder
+    #chmod 0666 /dev/binderfs/binder
+    #chmod 0666 /dev/binderfs/vndbinder
 
     mkdir /mnt/secure 0700 root root
     mkdir /mnt/secure/asec 0700 root root
@@ -557,7 +557,7 @@ on post-fs
 
     # Once everything is setup, no need to modify /.
     # The bind+remount combination allows this to work in containers.
-    mount rootfs rootfs / remount bind ro nodev
+    #mount rootfs rootfs / remount bind ro nodev
 
     # Mount default storage into root namespace
     mount none /mnt/user/0 /storage bind rec
