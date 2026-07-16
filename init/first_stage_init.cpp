@@ -356,7 +356,7 @@ int FirstStageMain(int argc, char** argv) {
     CHECKCALL(mkdir("/dev/dm-user", 0755));
     mount("/system/etc", "/etc", "none", MS_BIND, NULL); // cgroup fix
     unshare(CLONE_NEWCGROUP);
-    CHECKCALL(mount("devpts", "/dev/pts", "devpts", 0, NULL));
+    //CHECKCALL(mount("devpts", "/dev/pts", "devpts", 0, NULL));
 #define MAKE_STR(x) __STRING(x)
     CHECKCALL(mount("proc", "/proc", "proc", 0, "hidepid=2,gid=" MAKE_STR(AID_READPROC)));
 #undef MAKE_STR

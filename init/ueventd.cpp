@@ -208,10 +208,12 @@ int ueventd_main(int argc, char** argv) {
             std::move(ueventd_configuration.sysfs_permissions),
             std::move(ueventd_configuration.drivers), std::move(ueventd_configuration.subsystems),
             android::fs_mgr::GetBootDevices(), android::fs_mgr::GetBootPartUuid(), true);
-    uevent_listener.RegenerateUevents([&](const Uevent& uevent) -> ListenerAction {
-        bool uuid_check_done = device_handler->CheckUeventForBootPartUuid(uevent);
-        return uuid_check_done ? ListenerAction::kStop : ListenerAction::kContinue;
-    });
+    if (false) {
+        uevent_listener.RegenerateUevents([&](const Uevent& uevent) -> ListenerAction {
+            bool uuid_check_done = device_handler->CheckUeventForBootPartUuid(uevent);
+            return uuid_check_done ? ListenerAction::kStop : ListenerAction::kContinue;
+        });
+    }
 
     if (ueventd_configuration.enable_modalias_handling) {
         std::vector<std::string> base_paths = {"/odm/lib/modules", "/vendor/lib/modules"};
@@ -223,12 +225,14 @@ int ueventd_main(int argc, char** argv) {
             std::move(ueventd_configuration.external_firmware_handlers),
             /*serial_handler_after_cold_boot=*/false));
 
-    if (!android::base::GetBoolProperty(kColdBootDoneProp, false)) {
+    if (!android::base::GetBoolProperty(kColdBootDoneProp, true)) {
         ColdBoot cold_boot(uevent_listener, uevent_handlers,
                            ueventd_configuration.enable_parallel_restorecon,
                            ueventd_configuration.parallel_restorecon_dirs);
         cold_boot.Run();
     }
+
+    android::base::SetProperty(kColdBootDoneProp, "true");
 
     for (auto& uevent_handler : uevent_handlers) {
         uevent_handler->ColdbootDone();
