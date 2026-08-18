@@ -35,6 +35,8 @@ LOCAL_POST_INSTALL_CMD := mkdir -p $(addprefix $(TARGET_ROOT_OUT)/, \
     ln -sf /storage/self/primary $(TARGET_ROOT_OUT)/sdcard; \
     ln -sf /product/etc/security/adb_keys $(TARGET_ROOT_OUT)/adb_keys
 
+LOCAL_POST_INSTALL_CMD += ; mkdir -p $(TARGET_ROOT_OUT)/tmpx11
+
 # Currently it is being used for sdv product only, it doese not have the /data/user_de directory,
 # more context in b/319227059.
 ifdef PRODUCT_BUGREPORTS_SYMLINK_TARGET
