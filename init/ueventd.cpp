@@ -137,7 +137,9 @@ void main_loop(const UeventListener& uevent_listener,
     uevent_listener.Poll([&uevent_handlers](const Uevent& uevent) {
         android::base::Timer t;
         for (auto& uevent_handler : uevent_handlers) {
-            uevent_handler->HandleUevent(uevent);
+            if (false) {
+                uevent_handler->HandleUevent(uevent);
+            }
         }
         if (kLogUeventDuration) {
             LOG(INFO) << uevent << " took " << t.duration().count() << "ms";
