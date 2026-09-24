@@ -413,6 +413,10 @@ static int open_device(const char *device, int print_flags)
         return -1;
     }
     device_states = new_device_states;
+    ufds[nfds].fd = -1;
+    ufds[nfds].events = POLLIN;
+    device_names[nfds] = NULL;
+    memset(&device_states[nfds], 0, sizeof(device_states[0]));
 
     if(print_flags & PRINT_DEVICE)
         printf("add device %d: %s\n", nfds, device);
@@ -442,14 +446,13 @@ static int open_device(const char *device, int print_flags)
         print_hid_descriptor(id.bustype, id.vendor, id.product);
     }
 
-    ufds[nfds].fd = fd;
-    ufds[nfds].events = POLLIN;
     device_names[nfds] = strdup(device);
     if (device_names[nfds] == NULL) {
         fprintf(stderr, "out of memory\n");
         close(fd);
         return -1;
     }
+    ufds[nfds].fd = fd;
     device_states[nfds].is_fifo = is_fifo;
     device_states[nfds].fifo_pending = 0;
     nfds++;
@@ -576,7 +579,7 @@ static int print_input_event(const struct input_event *event, int get_time, int 
 
 static int read_fifo_events(int index, int get_time, int print_device, int print_flags,
                             int sync_rate, int64_t *last_sync_time, int *event_count,
-                            const char *newline) {
+                            const char *newline, short revents) {
     unsigned char read_buf[sizeof(struct input_event) * 64];
     struct device_state *state = &device_states[index];
     while (1) {
@@ -589,8 +592,19 @@ static int read_fifo_events(int index, int get_time, int print_device, int print
             fprintf(stderr, "could not get fifo event for %s, %s\n", device_names[index], strerror(errno));
             return -1;
         }
-        if (res == 0)
+        if (res == 0) {
+            if (revents & (POLLHUP | POLLERR)) {
+                int new_fd = open(device_names[index], O_RDWR | O_NONBLOCK | O_CLOEXEC);
+                if (new_fd < 0) {
+                    fprintf(stderr, "could not reopen fifo %s, %s\n",
+                            device_names[index], strerror(errno));
+                    return -1;
+                }
+                close(ufds[index].fd);
+                ufds[index].fd = new_fd;
+            }
             break;
+        }
 
         size_t offset = 0;
         if (state->fifo_pending) {
@@ -845,7 +859,7 @@ int getevent_main(int argc, char *argv[])
                 if (device_states[i].is_fifo) {
                     if (ufds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
                         res = read_fifo_events(i, get_time, print_device, print_flags, sync_rate,
-                                               &last_sync_time, &event_count, newline);
+                                               &last_sync_time, &event_count, newline, ufds[i].revents);
                         if (res < 0) {
                             ret = 1;
                             goto done;
