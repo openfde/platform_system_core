@@ -8,9 +8,11 @@
 #include <sys/inotify.h>
 #include <sys/limits.h>
 #include <sys/poll.h>
+#include <sys/stat.h>
 #include <linux/input.h>
 #include <err.h>
 #include <errno.h>
+#include <time.h>
 #include <unistd.h>
 
 struct label {
@@ -35,7 +37,25 @@ static struct label key_value_labels[] = {
 
 static struct pollfd *ufds;
 static char **device_names;
+struct device_state {
+    int is_fifo;
+    size_t fifo_pending;
+    unsigned char fifo_data[sizeof(struct input_event)];
+};
+static struct device_state *device_states;
 static int nfds;
+
+static const char *openfde_fifo_paths[] = {
+    "/dev/input/wl_touch_events",
+    "/dev/input/wl_keyboard_events",
+    "/dev/input/wl_pointer_events",
+    "/dev/input/wl_tablet_events",
+};
+
+static int is_openfde_fifo_name(const char *name) {
+    return !strcmp(name, "wl_touch_events") || !strcmp(name, "wl_keyboard_events") ||
+            !strcmp(name, "wl_pointer_events") || !strcmp(name, "wl_tablet_events");
+}
 
 enum {
     PRINT_DEVICE_ERRORS     = 1U << 0,
@@ -312,68 +332,91 @@ static int open_device(const char *device, int print_flags)
 {
     int version;
     int fd;
+    int open_flags = O_RDONLY | O_CLOEXEC;
     int clkid = CLOCK_MONOTONIC;
     struct pollfd *new_ufds;
     char **new_device_names;
+    struct device_state *new_device_states;
     char name[80];
     char location[80];
     char idstr[80];
     struct input_id id;
+    struct stat st;
+    int is_fifo = 0;
 
-    fd = open(device, O_RDONLY | O_CLOEXEC);
+    if (stat(device, &st) == 0 && S_ISFIFO(st.st_mode)) {
+        is_fifo = 1;
+        open_flags = O_RDWR | O_NONBLOCK | O_CLOEXEC;
+    }
+    snprintf(name, sizeof(name), "%s", device);
+
+    fd = open(device, open_flags);
     if(fd < 0) {
         if(print_flags & PRINT_DEVICE_ERRORS)
             fprintf(stderr, "could not open %s, %s\n", device, strerror(errno));
         return -1;
     }
-    
-    if(ioctl(fd, EVIOCGVERSION, &version)) {
-        if(print_flags & PRINT_DEVICE_ERRORS)
-            fprintf(stderr, "could not get driver version for %s, %s\n", device, strerror(errno));
-        return -1;
-    }
-    if(ioctl(fd, EVIOCGID, &id)) {
-        if(print_flags & PRINT_DEVICE_ERRORS)
-            fprintf(stderr, "could not get driver id for %s, %s\n", device, strerror(errno));
-        return -1;
-    }
-    name[sizeof(name) - 1] = '\0';
-    location[sizeof(location) - 1] = '\0';
-    idstr[sizeof(idstr) - 1] = '\0';
-    if(ioctl(fd, EVIOCGNAME(sizeof(name) - 1), &name) < 1) {
-        //fprintf(stderr, "could not get device name for %s, %s\n", device, strerror(errno));
-        name[0] = '\0';
-    }
-    if(ioctl(fd, EVIOCGPHYS(sizeof(location) - 1), &location) < 1) {
-        //fprintf(stderr, "could not get location for %s, %s\n", device, strerror(errno));
-        location[0] = '\0';
-    }
-    if(ioctl(fd, EVIOCGUNIQ(sizeof(idstr) - 1), &idstr) < 1) {
-        //fprintf(stderr, "could not get idstring for %s, %s\n", device, strerror(errno));
-        idstr[0] = '\0';
-    }
 
-    if (ioctl(fd, EVIOCSCLOCKID, &clkid) != 0) {
-        fprintf(stderr, "Can't enable monotonic clock reporting: %s\n", strerror(errno));
-        // a non-fatal error
+    if (!is_fifo) {
+        if(ioctl(fd, EVIOCGVERSION, &version)) {
+            if(print_flags & PRINT_DEVICE_ERRORS)
+                fprintf(stderr, "could not get driver version for %s, %s\n", device, strerror(errno));
+            close(fd);
+            return -1;
+        }
+        if(ioctl(fd, EVIOCGID, &id)) {
+            if(print_flags & PRINT_DEVICE_ERRORS)
+                fprintf(stderr, "could not get driver id for %s, %s\n", device, strerror(errno));
+            close(fd);
+            return -1;
+        }
+        name[sizeof(name) - 1] = '\0';
+        location[sizeof(location) - 1] = '\0';
+        idstr[sizeof(idstr) - 1] = '\0';
+        if(ioctl(fd, EVIOCGNAME(sizeof(name) - 1), &name) < 1) {
+            //fprintf(stderr, "could not get device name for %s, %s\n", device, strerror(errno));
+            name[0] = '\0';
+        }
+        if(ioctl(fd, EVIOCGPHYS(sizeof(location) - 1), &location) < 1) {
+            //fprintf(stderr, "could not get location for %s, %s\n", device, strerror(errno));
+            location[0] = '\0';
+        }
+        if(ioctl(fd, EVIOCGUNIQ(sizeof(idstr) - 1), &idstr) < 1) {
+            //fprintf(stderr, "could not get idstring for %s, %s\n", device, strerror(errno));
+            idstr[0] = '\0';
+        }
+
+        if (ioctl(fd, EVIOCSCLOCKID, &clkid) != 0) {
+            fprintf(stderr, "Can't enable monotonic clock reporting: %s\n", strerror(errno));
+            // a non-fatal error
+        }
     }
 
     new_ufds = realloc(ufds, sizeof(ufds[0]) * (nfds + 1));
     if(new_ufds == NULL) {
         fprintf(stderr, "out of memory\n");
+        close(fd);
         return -1;
     }
     ufds = new_ufds;
     new_device_names = realloc(device_names, sizeof(device_names[0]) * (nfds + 1));
     if(new_device_names == NULL) {
         fprintf(stderr, "out of memory\n");
+        close(fd);
         return -1;
     }
     device_names = new_device_names;
+    new_device_states = realloc(device_states, sizeof(device_states[0]) * (nfds + 1));
+    if(new_device_states == NULL) {
+        fprintf(stderr, "out of memory\n");
+        close(fd);
+        return -1;
+    }
+    device_states = new_device_states;
 
     if(print_flags & PRINT_DEVICE)
         printf("add device %d: %s\n", nfds, device);
-    if(print_flags & PRINT_DEVICE_INFO)
+    if((print_flags & PRINT_DEVICE_INFO) && !is_fifo)
         printf("  bus:      %04x\n"
                "  vendor    %04x\n"
                "  product   %04x\n"
@@ -381,27 +424,34 @@ static int open_device(const char *device, int print_flags)
                id.bustype, id.vendor, id.product, id.version);
     if(print_flags & PRINT_DEVICE_NAME)
         printf("  name:     \"%s\"\n", name);
-    if(print_flags & PRINT_DEVICE_INFO)
+    if((print_flags & PRINT_DEVICE_INFO) && !is_fifo)
         printf("  location: \"%s\"\n"
                "  id:       \"%s\"\n", location, idstr);
-    if(print_flags & PRINT_VERSION)
+    if((print_flags & PRINT_VERSION) && !is_fifo)
         printf("  version:  %d.%d.%d\n",
                version >> 16, (version >> 8) & 0xff, version & 0xff);
 
-    if(print_flags & PRINT_POSSIBLE_EVENTS) {
+    if((print_flags & PRINT_POSSIBLE_EVENTS) && !is_fifo) {
         print_possible_events(fd, print_flags);
     }
 
-    if(print_flags & PRINT_INPUT_PROPS) {
+    if((print_flags & PRINT_INPUT_PROPS) && !is_fifo) {
         print_input_props(fd);
     }
-    if(print_flags & PRINT_HID_DESCRIPTOR) {
+    if((print_flags & PRINT_HID_DESCRIPTOR) && !is_fifo) {
         print_hid_descriptor(id.bustype, id.vendor, id.product);
     }
 
     ufds[nfds].fd = fd;
     ufds[nfds].events = POLLIN;
     device_names[nfds] = strdup(device);
+    if (device_names[nfds] == NULL) {
+        fprintf(stderr, "out of memory\n");
+        close(fd);
+        return -1;
+    }
+    device_states[nfds].is_fifo = is_fifo;
+    device_states[nfds].fifo_pending = 0;
     nfds++;
 
     return 0;
@@ -415,9 +465,11 @@ int close_device(const char *device, int print_flags)
             int count = nfds - i - 1;
             if(print_flags & PRINT_DEVICE)
                 printf("remove device %d: %s\n", i, device);
+            close(ufds[i].fd);
             free(device_names[i]);
             memmove(device_names + i, device_names + i + 1, sizeof(device_names[0]) * count);
             memmove(ufds + i, ufds + i + 1, sizeof(ufds[0]) * count);
+            memmove(device_states + i, device_states + i + 1, sizeof(device_states[0]) * count);
             nfds--;
             return 0;
         }
@@ -454,6 +506,12 @@ static int read_notify(const char *dirname, int nfd, int print_flags)
         event = (struct inotify_event *)(event_buf + event_pos);
         //printf("%d: %08x \"%s\"\n", event->wd, event->mask, event->len ? event->name : "");
         if(event->len) {
+            if (is_openfde_fifo_name(event->name)) {
+                event_size = sizeof(*event) + event->len;
+                res -= event_size;
+                event_pos += event_size;
+                continue;
+            }
             strcpy(filename, event->name);
             if(event->mask & IN_CREATE) {
                 open_device(devname, print_flags);
@@ -486,11 +544,108 @@ static int scan_dir(const char *dirname, int print_flags)
            (de->d_name[1] == '\0' ||
             (de->d_name[1] == '.' && de->d_name[2] == '\0')))
             continue;
+        if (is_openfde_fifo_name(de->d_name))
+            continue;
         strcpy(filename, de->d_name);
         open_device(devname, print_flags);
     }
     closedir(dir);
     return 0;
+}
+
+static int print_input_event(const struct input_event *event, int get_time, int print_device,
+                             int print_flags, int sync_rate, int64_t *last_sync_time,
+                             int *event_count, const char *newline, int index) {
+    if(get_time) {
+        printf("[%8ld.%06ld] ", event->time.tv_sec, event->time.tv_usec);
+    }
+    if(print_device)
+        printf("%s: ", device_names[index]);
+    print_event(event->type, event->code, event->value, print_flags);
+    if(sync_rate && event->type == 0 && event->code == 0) {
+        int64_t now = event->time.tv_sec * 1000000LL + event->time.tv_usec;
+        if(*last_sync_time)
+            printf(" rate %lld", 1000000LL / (now - *last_sync_time));
+        *last_sync_time = now;
+    }
+    printf("%s", newline);
+    if(*event_count && --(*event_count) == 0)
+        return 1;
+    return 0;
+}
+
+static int read_fifo_events(int index, int get_time, int print_device, int print_flags,
+                            int sync_rate, int64_t *last_sync_time, int *event_count,
+                            const char *newline) {
+    unsigned char read_buf[sizeof(struct input_event) * 64];
+    struct device_state *state = &device_states[index];
+    while (1) {
+        ssize_t res = read(ufds[index].fd, read_buf, sizeof(read_buf));
+        if (res < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            fprintf(stderr, "could not get fifo event for %s, %s\n", device_names[index], strerror(errno));
+            return -1;
+        }
+        if (res == 0)
+            break;
+
+        size_t offset = 0;
+        if (state->fifo_pending) {
+            size_t needed = sizeof(struct input_event) - state->fifo_pending;
+            if ((size_t)res < needed) {
+                memcpy(state->fifo_data + state->fifo_pending, read_buf, res);
+                state->fifo_pending += res;
+                continue;
+            }
+            memcpy(state->fifo_data + state->fifo_pending, read_buf, needed);
+            struct input_event event;
+            memcpy(&event, state->fifo_data, sizeof(event));
+            if (print_input_event(&event, get_time, print_device, print_flags, sync_rate,
+                                  last_sync_time, event_count, newline, index)) {
+                return 1;
+            }
+            state->fifo_pending = 0;
+            offset += needed;
+        }
+        while ((size_t)(res - offset) >= sizeof(struct input_event)) {
+            struct input_event event;
+            memcpy(&event, read_buf + offset, sizeof(event));
+            if (print_input_event(&event, get_time, print_device, print_flags, sync_rate,
+                                  last_sync_time, event_count, newline, index)) {
+                return 1;
+            }
+            offset += sizeof(struct input_event);
+        }
+        if ((size_t)res > offset) {
+            state->fifo_pending = res - offset;
+            memcpy(state->fifo_data, read_buf + offset, state->fifo_pending);
+        }
+    }
+    return 0;
+}
+
+static void cleanup_fds(void) {
+    int i;
+    for (i = 0; i < nfds; i++) {
+        if (ufds && ufds[i].fd >= 0) {
+            close(ufds[i].fd);
+        }
+    }
+    for (i = 0; i < nfds; i++) {
+        free(device_names ? device_names[i] : NULL);
+    }
+    free(ufds);
+    free(device_names);
+    free(device_states);
+}
+
+static void open_default_fifo_devices(int print_flags) {
+    for (size_t i = 0; i < sizeof(openfde_fifo_paths) / sizeof(openfde_fifo_paths[0]); i++) {
+        open_device(openfde_fifo_paths[i], print_flags & ~PRINT_DEVICE_ERRORS);
+    }
 }
 
 static void usage(char *name)
@@ -508,6 +663,7 @@ static void usage(char *name)
     fprintf(stderr, "    -q: quiet (clear verbosity mask)\n");
     fprintf(stderr, "    -c: print given number of events then exit\n");
     fprintf(stderr, "    -r: print rate events are received\n");
+    fprintf(stderr, "When no [device] is given, getevent monitors /dev/input evdev devices and OpenFDE FIFOs\n");
 }
 
 int getevent_main(int argc, char *argv[])
@@ -515,6 +671,7 @@ int getevent_main(int argc, char *argv[])
     int c;
     int i;
     int res;
+    int ret = 0;
     int get_time = 0;
     int print_device = 0;
     char *newline = "\n";
@@ -611,38 +768,57 @@ int getevent_main(int argc, char *argv[])
     }
     nfds = 1;
     ufds = calloc(1, sizeof(ufds[0]));
+    device_names = calloc(1, sizeof(device_names[0]));
+    device_states = calloc(1, sizeof(device_states[0]));
+    if (!ufds || !device_names || !device_states) {
+        fprintf(stderr, "out of memory\n");
+        ret = 1;
+        goto done;
+    }
     ufds[0].fd = inotify_init();
     ufds[0].events = POLLIN;
+    if (ufds[0].fd < 0) {
+        fprintf(stderr, "could not initialize inotify, %s\n", strerror(errno));
+        ret = 1;
+        goto done;
+    }
     if(device) {
         if(!print_flags_set)
             print_flags |= PRINT_DEVICE_ERRORS;
         res = open_device(device, print_flags);
         if(res < 0) {
-            return 1;
+            ret = 1;
+            goto done;
         }
     } else {
         if(!print_flags_set)
             print_flags |= PRINT_DEVICE_ERRORS | PRINT_DEVICE | PRINT_DEVICE_NAME;
         print_device = 1;
-		res = inotify_add_watch(ufds[0].fd, device_path, IN_DELETE | IN_CREATE);
+        open_default_fifo_devices(print_flags);
+        res = inotify_add_watch(ufds[0].fd, device_path, IN_DELETE | IN_CREATE);
         if(res < 0) {
             fprintf(stderr, "could not add watch for %s, %s\n", device_path, strerror(errno));
-            return 1;
+            ret = 1;
+            goto done;
         }
         res = scan_dir(device_path, print_flags);
         if(res < 0) {
             fprintf(stderr, "scan dir failed for %s\n", device_path);
-            return 1;
+            ret = 1;
+            goto done;
         }
     }
 
     if(get_switch) {
         for(i = 1; i < nfds; i++) {
+            if (device_states[i].is_fifo)
+                continue;
             uint16_t sw;
             res = ioctl(ufds[i].fd, EVIOCGSW(1), &sw);
             if(res < 0) {
                 fprintf(stderr, "could not get switch state, %s\n", strerror(errno));
-                return 1;
+                ret = 1;
+                goto done;
             }
             sw &= get_switch;
             printf("%04x%s", sw, newline);
@@ -650,42 +826,51 @@ int getevent_main(int argc, char *argv[])
     }
 
     if(dont_block)
-        return 0;
+        goto done;
 
     while(1) {
-        //int pollres =
-        poll(ufds, nfds, -1);
-        //printf("poll %d, returned %d\n", nfds, pollres);
+        do {
+            res = poll(ufds, nfds, -1);
+        } while (res < 0 && errno == EINTR);
+        if (res < 0) {
+            fprintf(stderr, "poll failed, %s\n", strerror(errno));
+            ret = 1;
+            goto done;
+        }
         if(ufds[0].revents & POLLIN) {
             read_notify(device_path, ufds[0].fd, print_flags);
         }
         for(i = 1; i < nfds; i++) {
             if(ufds[i].revents) {
-                if(ufds[i].revents & POLLIN) {
-                    res = read(ufds[i].fd, &event, sizeof(event));
+                if (device_states[i].is_fifo) {
+                    if (ufds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
+                        res = read_fifo_events(i, get_time, print_device, print_flags, sync_rate,
+                                               &last_sync_time, &event_count, newline);
+                        if (res < 0) {
+                            ret = 1;
+                            goto done;
+                        }
+                        if (res > 0)
+                            goto done;
+                    }
+                } else if(ufds[i].revents & POLLIN) {
+                    do {
+                        res = read(ufds[i].fd, &event, sizeof(event));
+                    } while (res < 0 && errno == EINTR);
                     if(res < (int)sizeof(event)) {
                         fprintf(stderr, "could not get evdev event, %s\n", strerror(errno));
-                        return 1;
+                        ret = 1;
+                        goto done;
                     }
-                    if(get_time) {
-                        printf("[%8ld.%06ld] ", event.time.tv_sec, event.time.tv_usec);
-                    }
-                    if(print_device)
-                        printf("%s: ", device_names[i]);
-                    print_event(event.type, event.code, event.value, print_flags);
-                    if(sync_rate && event.type == 0 && event.code == 0) {
-                        int64_t now = event.time.tv_sec * 1000000LL + event.time.tv_usec;
-                        if(last_sync_time)
-                            printf(" rate %lld", 1000000LL / (now - last_sync_time));
-                        last_sync_time = now;
-                    }
-                    printf("%s", newline);
-                    if(event_count && --event_count == 0)
-                        return 0;
+                    if (print_input_event(&event, get_time, print_device, print_flags, sync_rate,
+                                          &last_sync_time, &event_count, newline, i))
+                        goto done;
                 }
             }
         }
     }
 
-    return 0;
+done:
+    cleanup_fds();
+    return ret;
 }
